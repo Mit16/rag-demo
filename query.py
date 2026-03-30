@@ -1,3 +1,4 @@
+# query.py
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
@@ -15,7 +16,7 @@ def load_vectorstore():
 
 
 def build_rag_chain(vectorstore):
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
     prompt = PromptTemplate(
         input_variables=["context", "question"],

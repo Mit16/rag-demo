@@ -1,3 +1,4 @@
+# ingest.py
 import json
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -12,11 +13,8 @@ def load_documents(filepath):
     docs = []
     for item in data:
         doc = Document(
-            page_content=item["content"],
-            metadata={
-                "id": item["id"],
-                "topic": item["topic"],
-            },
+            page_content=f"Topic: {item['topic']}\n{item['content']}",
+            metadata={"id": item["id"], "topic": item["topic"]},
         )
         docs.append(doc)
 
@@ -25,7 +23,7 @@ def load_documents(filepath):
 
 
 def chunk_documents(docs):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
     chunks = splitter.split_documents(docs)
     print(f"Split into {len(chunks)} chunks")
     return chunks
