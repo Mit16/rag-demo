@@ -13,7 +13,7 @@ def load_documents(filepath):
     docs = []
     for item in data:
         doc = Document(
-            page_content=f"Topic: {item['topic']}\n{item['content']}",
+            page_content=f"Topic: {item['topic']}\nQuestions this answers: {item['questions']}\n{item['content']}",
             metadata={"id": item["id"], "topic": item["topic"]},
         )
         docs.append(doc)
