@@ -1,8 +1,13 @@
 # Local RAG Demo
 
-A minimal, local Retrieval-Augmented Generation (RAG) implementation using LangChain, FAISS, and Ollama. 
+A robust, local Retrieval-Augmented Generation (RAG) implementation using LangChain, FAISS, and Ollama. 
 
-This project demonstrates how to ingest a local JSON knowledge base, create embeddings, and query them using a local Large Language Model without needing cloud API keys.
+This project goes beyond a simple tutorial by implementing advanced retrieval techniques to solve real-world RAG challenges:
+- **Chunk Size Tuning**: Fine-tuning how documents are split to optimize context window usage.
+- **MMR (Maximal Marginal Relevance)**: Diversifying search results to avoid retrieving redundant chunks.
+- **HyDE (Hypothetical Document Embeddings)**: Generating hypothetical answers to improve semantic search relevance.
+- **Similarity Score Thresholding**: Filtering out irrelevant retrieved chunks to ensure high-quality context.
+- **Debugging and Evaluation**: Handling scenarios with improperly retrieved chunks or low similarity scores.
 
 ## Tech Stack
 - **LangChain**: LLM orchestration framework
@@ -23,11 +28,11 @@ This project demonstrates how to ingest a local JSON knowledge base, create embe
    ```
 3. Install dependencies:
    ```bash
-   pip install langchain langchain-community langchain-ollama faiss-cpu
+   pip install -r requirements.txt
    ```
 
 4. Ensure [Ollama](https://ollama.ai/) is installed and running on your machine with your preferred model.
 
 ## Usage
-- **Ingest**: Process `data/sample.json` to generate and store vector embeddings.
-- **Query**: Ask questions against the local knowledge base using the RAG pipeline.
+- **Ingest**: Process `data/sample.json` and generate vector embeddings using proper chunking strategies.
+- **Query**: Ask questions against the local knowledge base using the advanced RAG pipeline.
