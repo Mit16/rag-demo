@@ -16,7 +16,9 @@ def load_vectorstore():
 
 
 def build_rag_chain(vectorstore):
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(
+        search_type="mmr", search_kwargs={"k": 3, "fetch_k": 5, "lambda_mult": 0.7}
+    )
 
     prompt = PromptTemplate(
         input_variables=["context", "question"],
