@@ -1,5 +1,6 @@
 # rag_graph.py — RAG pipeline built as a LangGraph state machine
 import json
+from config import config
 from typing import TypedDict, List
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -8,14 +9,22 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, START, END
-import os
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
 
 # Config
-VECTORSTORE_PATH = "vectorstore"
-DATA_PATH = "data/sample.json"
-EMBED_MODEL = "nomic-embed-text"
-LLM_MODEL = "phi3:mini"
-MAX_RETRIES = 2
+VECTORSTORE_PATH = config.vectorstore_path
+DATA_PATH = config.data_path
+EMBED_MODEL = config.embed_model
+LLM_MODEL = config.llm_model
+MAX_RETRIES = config.max_retries
 
 
 # State
@@ -28,97 +37,100 @@ class GraphState(TypedDict):
 
 # Shared resources
 embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-llm = ChatOllama(model=LLM_MODEL, temperature=0)
+llm = ChatOllama(model=LLM_MODEL, temperature=config.llm_temperature)
 vectorstore = FAISS.load_local(
     VECTORSTORE_PATH, embeddings, allow_dangerous_deserialization=True
 )
 retriever = vectorstore.as_retriever(
-    search_type="mmr", search_kwargs={"k": 3, "fetch_k": 5, "lambda_mult": 0.7}
+    search_type="mmr",
+    search_kwargs={
+        "k": config.retriever_k,
+        "fetch_k": config.retriever_fetch_k,
+        "lambda_mult": config.retriever_lambda,
+    },
 )
 
 
-# Node 1: retrieve
+# Node: rewrite_query
+def rewrite_query(state: GraphState) -> GraphState:
+    question = state["question"]
+    logger.info(f"Rewriting query: '{question}'")
+    rewrite_prompt = PromptTemplate(
+        input_variables=["question"],
+        template="""Rewrite the following question to be more specific and
+better suited for semantic document search. Return only the rewritten question.
+
+Original: {question}
+Rewritten:""",
+    )
+    chain = rewrite_prompt | llm | StrOutputParser()
+    rewritten = chain.invoke({"question": question}).strip()
+    logger.info(f"Rewritten query: '{question}' → '{rewritten}'")
+    return {"question": rewritten}
+
+
+# Node: retrieve
 def retrieve(state: GraphState) -> GraphState:
-    print(f"\n[retrieve] Searching vectorstore...")
+    logger.info("Searching vectorstore...")
     docs = retriever.invoke(state["question"])
     topics = [d.metadata["topic"] for d in docs]
-    print(f"[retrieve] Got chunks from: {topics}")
+    logger.info(f"Retrieved chunks from topics: {topics}")
     return {"documents": docs}
 
 
-# Node 2: grade_documents
+# Node: grade_documents
 def grade_documents(state: GraphState) -> GraphState:
     question = state["question"]
     documents = state["documents"]
     retries = state.get("retries", 0)
 
-    print(f"[grade] Checking {len(documents)} chunks for relevance...")
+    grader_prompt = PromptTemplate(
+        input_variables=["document", "question"],
+        template="""You are a relevance grader. Given a document and a question,
+respond with only 'yes' if the document contains information relevant to answering
+the question, or 'no' if it does not.
 
+Document: {document}
+Question: {question}
+Relevant (yes/no):""",
+    )
+    grader_chain = grader_prompt | llm | StrOutputParser()
     relevant = []
     for doc in documents:
-        # Simple keyword-based grader
-        STOP_WORDS = {
-            "is",
-            "what",
-            "how",
-            "the",
-            "a",
-            "an",
-            "it",
-            "and",
-            "or",
-            "in",
-            "of",
-            "to",
-            "for",
-            "can",
-            "we",
-            "do",
-            "does",
-            "why",
-            "are",
-            "was",
-            "be",
-            "this",
-            "that",
-        }
-
-        q_words = set(question.lower().split()) - STOP_WORDS
-        doc_words = set(doc.page_content.lower().split()) - STOP_WORDS
-        overlap = q_words & doc_words
-        if len(overlap) >= 2:
+        result = (
+            grader_chain.invoke({"document": doc.page_content, "question": question})
+            .strip()
+            .lower()
+        )
+        if result.startswith("yes"):
             relevant.append(doc)
-            print(f"  PASS - '{doc.metadata['topic']}' (overlap: {overlap})")
+            logger.info(f"PASS - Topic: '{doc.metadata['topic']}'")
         else:
-            print(f"  FAIL — '{doc.metadata['topic']}' (overlap: {overlap})")
-
+            logger.info(f"FAIL - Topic: '{doc.metadata['topic']}'")
     return {"documents": relevant, "retries": retries + 1}
 
 
-# Conditional edge: decide what to do after grading
+# Conditional edge: decide_after_grade
 def decide_after_grade(state: GraphState) -> str:
     if len(state["documents"]) > 0:
-        print(f"[decide] Relevant chunks found — moving to generate")
+        logger.info("Relevant chunks found — moving to generate")
         return "generate"
     if state["retries"] >= MAX_RETRIES:
-        print(f"[decide] Max retries hit — generating with no context")
+        logger.info("Max retries hit — generating with no context")
         return "generate"
-    print(f"[decide] No relevant chunks — retrying retrieval")
-    return "retrieve"
+    logger.info("No relevant chunks — retrying retrieval")
+    return "rewrite_query"  # Changed from "retrieve" to "rewrite_query"
 
 
-# Node 3: generate
+# Node: generate
 def generate(state: GraphState) -> GraphState:
     question = state["question"]
     documents = state["documents"]
-
-    print(f"[generate] Calling {LLM_MODEL}...")
-
+    logger.info(f"Generating answer using {LLM_MODEL}...")
     if not documents:
+        logger.warning("No relevant documents found — returning 'I don't know'")
         return {"generation": "I don't know based on the provided data."}
-    else:
-        context = "\n\n".join(doc.page_content for doc in documents)
-
+    context = "\n\n".join(doc.page_content for doc in documents)
     prompt = PromptTemplate(
         input_variables=["context", "question"],
         template="""You are a helpful assistant. Use only the context below to answer the question.
@@ -131,47 +143,45 @@ Question: {question}
 
 Answer:""",
     )
-
     chain = prompt | llm | StrOutputParser()
     response = chain.invoke({"context": context, "question": question})
+    logger.info("Answer generated")
     return {"generation": response}
 
 
 # Build the graph
 def build_graph():
     graph = StateGraph(GraphState)
-
-    # Add nodes
     graph.add_node("retrieve", retrieve)
     graph.add_node("grade_documents", grade_documents)
     graph.add_node("generate", generate)
-
-    # Add edges
+    graph.add_node("rewrite_query", rewrite_query)
     graph.add_edge(START, "retrieve")
     graph.add_edge("retrieve", "grade_documents")
     graph.add_conditional_edges(
         "grade_documents",
         decide_after_grade,
-        {"generate": "generate", "retrieve": "retrieve"},
+        {
+            "generate": "generate",
+            "rewrite_query": "rewrite_query",
+        },
     )
+    graph.add_edge("rewrite_query", "retrieve")
     graph.add_edge("generate", END)
-
     return graph.compile()
 
 
 # Run
 def ask(app, question: str):
-    print(f"\n{'='*60}")
-    print(f"Q: {question}")
+    logger.info(f"Question: {question}")
     result = app.invoke(
         {"question": question, "documents": [], "generation": "", "retries": 0}
     )
-    print(f"\nA: {result['generation']}")
+    logger.info(f"Answer: {result['generation']}")
 
 
 def main():
     app = build_graph()
-
     questions = [
         "What is RAG and why is it useful?",
         "How does Ollama help developers?",
@@ -179,9 +189,7 @@ def main():
     ]
     for q in questions:
         ask(app, q)
-
-    print(f"\n{'='*60}")
-    print("Interactive mode (type 'exit' to quit)\n")
+    logger.info("Interactive mode (type 'exit' to quit)")
     while True:
         user_input = input("Your question: ").strip()
         if user_input.lower() in ("exit", "quit"):
