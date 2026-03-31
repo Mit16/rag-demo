@@ -32,28 +32,31 @@ User query → Embed query → FAISS similarity search → Grade chunks
 
 ## Key design decisions
 
-**HyDE-lite** — Each document includes hypothetical questions it answers,
-embedded alongside the content. Fixes query-document vocabulary mismatch.
+**LLM-based relevance grader** — Uses an LLM to judge if retrieved chunks are relevant to the question, not just keyword overlap. Handles synonyms and paraphrases better than simple keyword matching.
 
-**MMR retrieval** — Uses Maximal Marginal Relevance instead of pure
-similarity to prevent topic clustering in retrieved chunks.
+**Query rewriting and LLM-based grader** — Rewriting failed queries and using an LLM to grade chunk relevance significantly improves retrieval accuracy, reducing false positives and ensuring only relevant context reaches the generator.
 
-**LangGraph grader node** — Retrieved chunks are graded for keyword
-relevance before reaching the LLM. Irrelevant results trigger a retry
-loop (max 2 retries) before falling back to "I don't know."
+**HyDE-lite** — Each document includes hypothetical questions it answers, embedded alongside the content. Fixes query-document vocabulary mismatch.
 
-**Stop word filtering** — Grader ignores common words so relevance
-is judged on meaningful terms only.
+**LangGraph state machine** — The pipeline is wrapped in a state machine with three nodes: retriever, grader, and generator. Irrelevant chunks trigger a retry loop (max 2 retries) before falling back to "I don't know."
+
+**MMR retrieval** — Uses Maximal Marginal Relevance to prevent topic clustering in retrieved chunks.
+
+**Structured logging** — All major steps (retrieval, grading, generation, rewriting) are logged for debugging and observability.
 
 ## Project structure
 
 ```
 rag-demo/
-├── data/sample.json     # knowledge base
-├── ingest.py            # load → chunk → embed → store
-├── query.py             # simple linear RAG pipeline
-├── rag.py               # full pipeline with interactive mode
-├── rag_graph.py         # LangGraph version with grader + retry loop
+├── data/sample.json              # knowledge base
+├── config.py                     # centralized config
+├── ingest.py                     # load → chunk → embed → store
+├── query.py                      # simple linear RAG pipeline
+├── rag.py                        # full pipeline with interactive mode
+├── rag_graph.py                  # LangGraph version with grader + retry loop
+├── evaluate.py                   # test suite for RAG accuracy
+├── .env.example                  # example environment variables
+├── .gitignore                    # ignored files (e.g., .env)
 └── requirements.txt
 ```
 
@@ -64,10 +67,14 @@ rag-demo/
 ollama pull phi3:mini
 ollama pull nomic-embed-text
 
+# (Optional) Create a .env file for model configuration
+cp .env.example .env
+# Edit .env to set your model paths and max retries
+
 # Install dependencies
 python3 -m venv venv
 source venv/bin/activate
-pip install langchain langchain-community langchain-ollama faiss-cpu langgraph
+pip install -r requirements.txt
 
 # Build vectorstore
 python3 ingest.py
@@ -77,6 +84,9 @@ python3 rag.py
 
 # Run LangGraph pipeline (with grader + retry)
 python3 rag_graph.py
+
+# Evaluate the pipeline
+python3 evaluate.py
 ```
 
 ## What I learned building this
@@ -86,3 +96,4 @@ python3 rag_graph.py
 - Chunk size directly affects embedding quality
 - MMR prevents similar chunks from crowding out relevant ones
 - LangGraph state machines let you add decision logic between pipeline steps
+- Structured logging is essential for debugging complex pipelines
